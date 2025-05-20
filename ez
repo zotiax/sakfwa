@@ -1,3 +1,4 @@
+
 setfpscap(3294584223)
 
 
@@ -4170,6 +4171,16 @@ local TargetAim = {
             OutlineTransparency = 0,
             PulseEffect = false,
             PulseSpeed = 1
+        },
+        DamageIndicator = {
+            Enabled = true,
+            Color = Color3.fromRGB(255, 0, 0),
+            Duration = 3,
+            FadeDuration = 1,
+            Size = 32,
+            Font = Drawing.Fonts.UI,
+            ShowTotal = true,
+            MaxOffset = 20
         }
     },
     Strafe = {
@@ -4179,13 +4190,22 @@ local TargetAim = {
         Distance = 6,
         Visualize = true,
         VisualizerColor = Color3.fromRGB(0, 170, 255),
-        Direction = "Clockwise" -- "Clockwise" or "Counter-Clockwise"
+        Direction = "Clockwise", -- "Clockwise" or "Counter-Clockwise"
+        Prediction = {
+            Enabled = false,
+            Strength = 0.5 -- How far ahead of the target to strafe
+        }
     },
     KillAura = {
         Enabled = false,
         Mode = "Target", -- "Target" or "Always"
         Range = 500,
         LastShot = 0
+    },
+    Checks = {
+        Dead = false,
+        Knocked = false,
+        Visible = false
     }
 }
 
@@ -4221,6 +4241,72 @@ for i = 1, numSegments do
     line.Transparency = 0.3
     line.Parent = workspace
     table.insert(StrafeVisualizer, line)
+end
+
+-- Damage indicator system
+local DamageIndicators = {}
+local TotalDamage = 0
+local LastDamageTime = 0
+local previousHealth = {}
+local recentlyShotPlayers = {}
+
+-- Function to create a new damage indicator
+local function CreateDamageIndicator(player, damageAmount)
+    if not TargetAim.Visualization.DamageIndicator.Enabled then return end
+    
+    local head = player.Character and player.Character:FindFirstChild("Head")
+    if head then
+        local damageContainer = head:FindFirstChild("DamageContainer")
+        if not damageContainer then
+            damageContainer = Instance.new("BillboardGui")
+            damageContainer.Name = "DamageContainer"
+            damageContainer.Parent = head
+            damageContainer.Adornee = head
+            damageContainer.Size = UDim2.new(0, 100, 0, 50)
+            damageContainer.StudsOffset = Vector3.new(0, 2, 0)
+            damageContainer.AlwaysOnTop = true
+            damageContainer.MaxDistance = 500
+            damageContainer.Enabled = true
+        end
+
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Parent = damageContainer
+        textLabel.Text = tostring(damageAmount)
+        textLabel.TextColor3 = TargetAim.Visualization.DamageIndicator.Color
+        textLabel.TextSize = TargetAim.Visualization.DamageIndicator.Size + (damageAmount / 10)
+        textLabel.Font = Enum.Font.SourceSansBold
+        textLabel.BackgroundTransparency = 1
+        textLabel.Size = UDim2.new(1, 0, 0, TargetAim.Visualization.DamageIndicator.Size)
+        textLabel.TextStrokeTransparency = 0.4
+        textLabel.Position = UDim2.new(0.5, -50 + math.random(-TargetAim.Visualization.DamageIndicator.MaxOffset, TargetAim.Visualization.DamageIndicator.MaxOffset), 0, math.random(-TargetAim.Visualization.DamageIndicator.MaxOffset, TargetAim.Visualization.DamageIndicator.MaxOffset))
+
+        local targetPosition = UDim2.new(0.5, -50, 0, -100)
+
+        local moveUpTween = game:GetService("TweenService"):Create(
+            textLabel, 
+            TweenInfo.new(TargetAim.Visualization.DamageIndicator.Duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), 
+            {Position = targetPosition}
+        )
+
+        local fadeOutTween = game:GetService("TweenService"):Create(
+            textLabel,
+            TweenInfo.new(TargetAim.Visualization.DamageIndicator.FadeDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+            {TextTransparency = 1, TextStrokeTransparency = 1}
+        )
+
+        moveUpTween:Play()
+
+        moveUpTween.Completed:Connect(function()
+            fadeOutTween:Play()
+            fadeOutTween.Completed:Connect(function()
+                textLabel:Destroy()
+            end)
+        end)
+        
+        -- Update total damage
+        TotalDamage = TotalDamage + damageAmount
+        LastDamageTime = tick()
+    end
 end
 
 -- Helper Functions
@@ -4329,6 +4415,17 @@ local function LockTarget()
             TargetHighlight.Adornee = target.Character
             TargetHighlight.Enabled = true
         end
+        
+        -- Reset damage counter when locking onto a new target
+        TotalDamage = 0
+        
+        -- Mark as recently shot for damage indicators
+        recentlyShotPlayers[target.UserId] = tick()
+        
+        -- Store initial health for damage calculation
+        if target.Character and target.Character:FindFirstChildOfClass("Humanoid") then
+            previousHealth[target.UserId] = target.Character:FindFirstChildOfClass("Humanoid").Health
+        end
     end
 end
 
@@ -4347,6 +4444,9 @@ local function UnlockTarget()
         -- Remove highlight
         TargetHighlight.Adornee = nil
         TargetHighlight.Enabled = false
+        
+        -- Reset damage counter
+        TotalDamage = 0
     end
 end
 
@@ -4420,6 +4520,18 @@ local function ShootRemote(tool, enemy)
             enemy.Character.Head,
             Vector3.new(0, 0, -1)
         )
+        
+        -- Check for damage to display damage indicators
+        if enemy.Character:FindFirstChildOfClass("Humanoid") then
+            local currentHealth = enemy.Character:FindFirstChildOfClass("Humanoid").Health
+            local prevHealth = previousHealth[enemy.UserId] or currentHealth
+            
+            if currentHealth < prevHealth then
+                local damage = math.floor(prevHealth - currentHealth)
+                CreateDamageIndicator(enemy, damage)
+                previousHealth[enemy.UserId] = currentHealth
+            end
+        end
     end
 end
 
@@ -4441,6 +4553,28 @@ local function KillAura()
         if closestPlayer then
             ShootRemote(tool, closestPlayer)
         end
+    end
+end
+
+-- Function to check for damage on nearest player
+local function checkNearestPlayerDamage()
+    if not TargetAim.Visualization.DamageIndicator.Enabled then return end
+    
+    local nearestPlayer = TargetAim.LockedTarget or GetClosestPlayerInFOV()
+    
+    if nearestPlayer and nearestPlayer.Character and nearestPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        local humanoid = nearestPlayer.Character:FindFirstChildOfClass("Humanoid")
+        local currentHealth = humanoid.Health
+        
+        local prevHealth = previousHealth[nearestPlayer.UserId] or currentHealth
+        
+        if currentHealth < prevHealth then
+            if recentlyShotPlayers[nearestPlayer.UserId] and tick() - recentlyShotPlayers[nearestPlayer.UserId] < 1.5 then
+                CreateDamageIndicator(nearestPlayer, math.floor(prevHealth - currentHealth))
+            end
+        end
+        
+        previousHealth[nearestPlayer.UserId] = currentHealth
     end
 end
 
@@ -4493,10 +4627,47 @@ RunService.RenderStepped:Connect(function()
             else
                 TargetHighlight.FillTransparency = TargetAim.Visualization.Highlight.FillTransparency
             end
+            
+            -- Check for damage
+            checkNearestPlayerDamage()
         end
     elseif not TargetAim.Enabled and TargetAim.LockedTarget then
         -- If target aim is disabled but we still have a target, unlock it
         UnlockTarget()
+    end
+    
+    -- Show total damage indicator if enabled
+    if TargetAim.Visualization.DamageIndicator.Enabled and 
+       TargetAim.Visualization.DamageIndicator.ShowTotal and 
+       TargetAim.LockedTarget and 
+       TotalDamage > 0 and
+       tick() - LastDamageTime < 3 then
+        
+        -- Update or create the total damage indicator
+        if not _G.TotalDamageText then
+            _G.TotalDamageText = Drawing.new("Text")
+            _G.TotalDamageText.Size = TargetAim.Visualization.DamageIndicator.Size + 2
+            _G.TotalDamageText.Color = Color3.fromRGB(255, 255, 0) -- Yellow for total
+            _G.TotalDamageText.Center = true
+            _G.TotalDamageText.Outline = true
+            _G.TotalDamageText.OutlineColor = Color3.new(0, 0, 0)
+            _G.TotalDamageText.Font = TargetAim.Visualization.DamageIndicator.Font
+        end
+        
+        _G.TotalDamageText.Text = "Total: " .. math.floor(TotalDamage)
+        _G.TotalDamageText.Visible = true
+        
+        -- Position at the bottom of the target
+        if TargetAim.TargetPart then
+            local screenPos, onScreen = workspace.CurrentCamera:WorldToScreenPoint(TargetAim.TargetPart.Position)
+            if onScreen then
+                _G.TotalDamageText.Position = Vector2.new(screenPos.X, screenPos.Y + 30)
+            else
+                _G.TotalDamageText.Visible = false
+            end
+        end
+    elseif _G.TotalDamageText then
+        _G.TotalDamageText.Visible = false
     end
 end)
 
@@ -4521,8 +4692,13 @@ RunService.Heartbeat:Connect(function(deltaTime)
                 strafeAngle = strafeAngle - angleChange
             end
             
-            -- Calculate strafe position
+            -- Calculate target position with prediction if enabled
             local targetPos = targetRootPart.Position
+            if TargetAim.Strafe.Prediction.Enabled and targetRootPart.Velocity.Magnitude > 0.1 then
+                -- Calculate predicted position based on target's velocity
+                targetPos = targetPos + (targetRootPart.Velocity * TargetAim.Strafe.Prediction.Strength)
+            end
+            
             local distance = TargetAim.Strafe.Distance
             local height = TargetAim.Strafe.Height
             
@@ -4602,6 +4778,17 @@ if success and grm and grm.__index and setreadonly then
     
     setreadonly(grm, true)
 end
+
+-- Register input for damage indicators
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local target = GetClosestPlayerInFOV()
+        if target and isPlayerVisible(target) then
+            recentlyShotPlayers[target.UserId] = tick()
+        end
+    end
+end)
 
 -- Target Aim Section in GUI
 -- Target Aim Section in GUI
@@ -4761,6 +4948,156 @@ visual_section:slider({name = "Highlight Pulse Speed", flag = "rage_target_aim_h
     TargetAim.Visualization.Highlight.PulseSpeed = value
 end})
 
+-- Initialize Target Name Display
+if not TargetAim.Visualization.NameDisplay then
+    TargetAim.Visualization.NameDisplay = {
+        Enabled = true,
+        Color = Color3.fromRGB(255, 255, 255),
+        Size = 18,
+        Shadow = true,
+        Offset = Vector2.new(0, 30)
+    }
+end
+
+-- Create the target name label if it doesn't exist
+if not _G.TargetNameLabel then
+    local TargetNameLabel = Drawing.new("Text")
+    TargetNameLabel.Visible = false
+    TargetNameLabel.Center = true
+    TargetNameLabel.Outline = true
+    TargetNameLabel.Font = 2
+    TargetNameLabel.Size = TargetAim.Visualization.NameDisplay.Size
+    TargetNameLabel.Color = TargetAim.Visualization.NameDisplay.Color
+    TargetNameLabel.Transparency = 1
+    _G.TargetNameLabel = TargetNameLabel
+end
+
+-- Target Name Display
+visual_section:toggle({name = "Show Target Lock Text", flag = "rage_target_name_display", default = true, callback = function(bool)
+    if TargetAim.Visualization.NameDisplay then
+        TargetAim.Visualization.NameDisplay.Enabled = bool
+    else
+        TargetAim.Visualization.NameDisplay = {Enabled = bool}
+    end
+    
+    -- Update name display if we have a target
+    if _G.TargetNameLabel then
+        _G.TargetNameLabel.Visible = bool and TargetAim.LockedTarget ~= nil
+    end
+end})
+
+visual_section:colorpicker({name = "Target Lock Text Color", flag = "rage_target_name_color", default = Color3.fromRGB(255, 255, 255), callback = function(color)
+    if TargetAim.Visualization.NameDisplay then
+        TargetAim.Visualization.NameDisplay.Color = color
+    else
+        TargetAim.Visualization.NameDisplay = {Color = color}
+    end
+    
+    if _G.TargetNameLabel then
+        _G.TargetNameLabel.Color = color
+    end
+end})
+
+visual_section:slider({name = "Target Lock Text Size", flag = "rage_target_name_size", min = 12, max = 24, default = 18, callback = function(value)
+    if TargetAim.Visualization.NameDisplay then
+        TargetAim.Visualization.NameDisplay.Size = value
+    else
+        TargetAim.Visualization.NameDisplay = {Size = value}
+    end
+    
+    if _G.TargetNameLabel then
+        _G.TargetNameLabel.Size = value
+    end
+end})
+
+visual_section:toggle({name = "Target Lock Text Shadow", flag = "rage_target_name_shadow", default = true, callback = function(bool)
+    if TargetAim.Visualization.NameDisplay then
+        TargetAim.Visualization.NameDisplay.Shadow = bool
+    else
+        TargetAim.Visualization.NameDisplay = {Shadow = bool}
+    end
+    
+    if _G.TargetNameLabel then
+        _G.TargetNameLabel.Outline = bool
+    end
+end})
+
+-- Update the target name display in the main loop
+local function UpdateTargetNameDisplay()
+    if not _G.TargetNameLabel then return end
+    
+    if TargetAim.LockedTarget and TargetAim.Visualization.NameDisplay and TargetAim.Visualization.NameDisplay.Enabled then
+        local targetPlayer = nil
+        
+        -- Try to find the player from the target character
+        for _, player in pairs(game:GetService("Players"):GetPlayers()) do
+            if player.Character and (player.Character == TargetAim.LockedTarget or player.Character == TargetAim.LockedTarget.Parent) then
+                targetPlayer = player
+                break
+            end
+        end
+        
+        -- If we still don't have a player, try to find by target part's parent
+        if not targetPlayer and TargetAim.TargetPart then
+            local character = TargetAim.TargetPart.Parent
+            for _, player in pairs(game:GetService("Players"):GetPlayers()) do
+                if player.Character and player.Character == character then
+                    targetPlayer = player
+                    break
+                end
+            end
+        end
+        
+        -- Position the text under the crosshair (center of screen)
+        local viewportSize = game.Workspace.CurrentCamera.ViewportSize
+        local centerX = viewportSize.X / 2
+        local centerY = viewportSize.Y / 2
+        
+        -- Apply offset to position it under the crosshair
+        local offset = TargetAim.Visualization.NameDisplay.Offset or Vector2.new(0, 30)
+        
+        _G.TargetNameLabel.Position = Vector2.new(centerX + offset.X, centerY + offset.Y)
+        
+        -- Only show the text if we have a valid player
+        if targetPlayer then
+            local displayName = targetPlayer.DisplayName or targetPlayer.Name
+            _G.TargetNameLabel.Text = "Locked onto: " .. displayName
+            _G.TargetNameLabel.Visible = true
+        else
+            _G.TargetNameLabel.Visible = false
+        end
+    else
+        _G.TargetNameLabel.Visible = false
+    end
+end
+
+-- Connect the update function to the main loop
+if _G.TargetNameUpdateConnection then
+    _G.TargetNameUpdateConnection:Disconnect()
+end
+_G.TargetNameUpdateConnection = game:GetService("RunService").RenderStepped:Connect(UpdateTargetNameDisplay)
+
+-- Damage Numbers
+visual_section:toggle({name = "Damage Numbers", flag = "rage_target_damage_numbers", default = true, callback = function(bool)
+    TargetAim.Visualization.DamageIndicator.Enabled = bool
+end})
+
+visual_section:colorpicker({name = "Damage Numbers Color", flag = "rage_target_damage_color", default = Color3.fromRGB(255, 0, 0), callback = function(color)
+    TargetAim.Visualization.DamageIndicator.Color = color
+end})
+
+visual_section:slider({name = "Damage Numbers Size", flag = "rage_target_damage_size", min = 16, max = 48, default = 32, callback = function(value)
+    TargetAim.Visualization.DamageIndicator.Size = value
+end})
+
+visual_section:slider({name = "Damage Numbers Duration", flag = "rage_target_damage_duration", min = 1, max = 5, default = 3, interval = 0.1, callback = function(value)
+    TargetAim.Visualization.DamageIndicator.Duration = value
+end})
+
+visual_section:toggle({name = "Show Total Damage", flag = "rage_target_damage_total", default = true, callback = function(bool)
+    TargetAim.Visualization.DamageIndicator.ShowTotal = bool
+end})
+
 visual_section:toggle({name = "Visualize Strafe", flag = "rage_target_strafe_visualize", default = true, callback = function(bool)
     TargetAim.Strafe.Visualize = bool
 end})
@@ -4798,7 +5135,17 @@ strafe_section:dropdown({
     end
 })
 
--- Connect to RunService to update the rapid fire functionality
+-- Target Strafe Prediction
+strafe_section:toggle({name = "Use Prediction", flag = "rage_target_strafe_prediction", default = false, callback = function(bool)
+    TargetAim.Strafe.Prediction.Enabled = bool
+end})
+
+strafe_section:slider({name = "Prediction Strength", flag = "rage_target_strafe_prediction_strength", min = 0.1, max = 2.0, default = 0.5, interval = 0.1, callback = function(value)
+    TargetAim.Strafe.Prediction.Strength = value
+end})
+
+
+
 local RunService = game:GetService("RunService")
 local LocalPlayer = game:GetService("Players").LocalPlayer
 local Orginal = {}
