@@ -1,1 +1,570 @@
+local ReGui = loadstring(game:HttpGet('https://raw.githubusercontent.com/depthso/Dear-ReGui/refs/heads/main/ReGui.lua'))()
 
+
+local Window = ReGui:TabsWindow({
+	Title = "core.cc",
+	Size = UDim2.fromOffset(300, 200)
+}) --> TabSelector & WindowClass
+
+
+
+local Names = {"Aim Assist"}
+
+for _, Name in next, Names do
+	--// Create tab
+	local Tab = Window:CreateTab({Name=Name}) --> Canvas
+	Tab:Label({
+		Text = ``
+	})
+	
+	if Name == "Aim Assist" then
+		local isCamlockEnabled = false
+		local camlockTarget = nil
+		local isAimAssistEnabled = false
+		local smoothnessEnabled = false
+		local smoothness = 5
+		local shakeEnabled = false
+		local shakeX = 5
+		local shakeY = 5
+		local shakeZ = 5
+		local selectedHitbox = "HumanoidRootPart"
+		local predictionEnabled = false
+		local predictionAmount = 0.001
+
+
+		
+		-- Aim Assist Main Toggle
+		local aimAssistCheckbox = Tab:Checkbox({
+			Value = false,
+			Label = "Enable Aim Assist",
+			Callback = function(self, Value)
+				isAimAssistEnabled = Value
+				
+				if not isAimAssistEnabled then
+					-- Disable camlock if aim assist is turned off
+					game:GetService("RunService"):UnbindFromRenderStep("CamlockLoop")
+					camlockTarget = nil
+					isCamlockEnabled = false
+					print("Aim Assist disabled")
+				else
+					print("Aim Assist enabled")
+				end
+			end,
+		})
+		
+		-- Game Type Selection
+
+		
+		-- Hitbox Selection
+		Tab:Combo({
+			Label = "Target Hitbox",
+			Selected = "HumanoidRootPart",
+			Items = {
+				"Head",
+				"UpperTorso",
+				"HumanoidRootPart",
+				"LowerTorso"
+			},
+			Callback = function(self, Value)
+				selectedHitbox = Value
+				print("Selected hitbox: " .. Value)
+				
+				-- Update camlock behavior if it's currently active
+				if isCamlockEnabled and camlockTarget then
+					updateCamlockBehavior()
+				end
+			end
+		})
+		
+		-- Smoothness Controls
+		Tab:Checkbox({
+			Value = false,
+			Label = "Enable Smoothness",
+			Callback = function(self, Value)
+				smoothnessEnabled = Value
+				print("Smoothness " .. (Value and "enabled" or "disabled"))
+				
+				-- Update camlock behavior if it's currently active
+				if isCamlockEnabled and camlockTarget then
+					updateCamlockBehavior()
+				end
+			end,
+		})
+		
+		Tab:SliderInt({
+			Label = "Smoothness",
+			Value = 5,
+			Minimum = 1,
+			Maximum = 1000,
+			Callback = function(self, Value)
+				smoothness = Value
+				print("Smoothness set to: " .. Value)
+			end
+		})
+		
+		-- Prediction Controls
+		Tab:Checkbox({
+			Value = false,
+			Label = "Enable Prediction",
+			Callback = function(self, Value)
+				predictionEnabled = Value
+				print("Prediction " .. (Value and "enabled" or "disabled"))
+				
+				-- Update camlock behavior if it's currently active
+				if isCamlockEnabled and camlockTarget then
+					updateCamlockBehavior()
+				end
+			end,
+		})
+		
+		Tab:SliderFloat({
+			Label = "Prediction Amount",
+			Value = 0.001,
+			Minimum = 0.001,
+			Maximum = 1.0,
+			Format = "%.3f",
+			Callback = function(self, Value)
+				predictionAmount = Value
+				print("Prediction set to: " .. Value)
+				
+				-- Update camlock behavior if it's currently active
+				if isCamlockEnabled and camlockTarget then
+					updateCamlockBehavior()
+				end
+			end
+		})
+		
+		-- Shake Controls
+		Tab:Checkbox({
+			Value = false,
+			Label = "Enable Shake",
+			Callback = function(self, Value)
+				shakeEnabled = Value
+				print("Shake " .. (Value and "enabled" or "disabled"))
+				
+				-- Update camlock behavior if it's currently active
+				if isCamlockEnabled and camlockTarget then
+					updateCamlockBehavior()
+				end
+			end,
+		})
+		
+		Tab:SliderInt({
+			Label = "Shake X",
+			Value = 5,
+			Minimum = 0,
+			Maximum = 50,
+			Callback = function(self, Value)
+				shakeX = Value
+				print("Shake X set to: " .. Value)
+			end
+		})
+		
+		Tab:SliderInt({
+			Label = "Shake Y",
+			Value = 5,
+			Minimum = 0,
+			Maximum = 50,
+			Callback = function(self, Value)
+				shakeY = Value
+				print("Shake Y set to: " .. Value)
+			end
+		})
+		
+		Tab:SliderInt({
+			Label = "Shake Z",
+			Value = 5,
+			Minimum = 0,
+			Maximum = 50,
+			Callback = function(self, Value)
+				shakeZ = Value
+				print("Shake Z set to: " .. Value)
+			end
+		})
+		
+		-- Function to get target part based on game type
+		local function getTargetPart(player)
+			if not player or not player.Character then return nil end
+			
+			if isRoboxRivals then
+				-- For Robox Rivals, check for the specific character model structure
+				if player.Character:FindFirstChild("Torso") then
+					return player.Character:FindFirstChild("Torso")
+				elseif player.Character:FindFirstChild("UpperTorso") then
+					return player.Character:FindFirstChild("UpperTorso")
+				end
+			else
+				-- Standard Roblox character structure
+				if player.Character:FindFirstChild(selectedHitbox) then
+					return player.Character:FindFirstChild(selectedHitbox)
+				end
+			end
+			
+			return nil
+		end
+		
+		-- Function to update camlock behavior
+		function updateCamlockBehavior()  -- Made function global for access
+			game:GetService("RunService"):UnbindFromRenderStep("CamlockLoop")
+			
+			if camlockTarget then
+				game:GetService("RunService"):BindToRenderStep("CamlockLoop", Enum.RenderPriority.Camera.Value, function()
+					local targetPart = getTargetPart(camlockTarget)
+					
+					if targetPart then
+						local camera = workspace.CurrentCamera
+						local targetPos = targetPart.Position
+						
+						-- Apply prediction if enabled
+						if predictionEnabled and targetPart:IsA("BasePart") then
+							targetPos = targetPos + (targetPart.Velocity * predictionAmount)
+						end
+						
+						-- Apply shake if enabled
+						if shakeEnabled then
+							targetPos = targetPos + Vector3.new(
+								math.random(-shakeX, shakeX) / 100,
+								math.random(-shakeY, shakeY) / 100,
+								math.random(-shakeZ, shakeZ) / 100
+							)
+						end
+						
+						if smoothnessEnabled then
+							-- Apply smoothness
+							local currentCFrame = camera.CFrame
+							local targetCFrame = CFrame.new(currentCFrame.Position, targetPos)
+							
+							-- Calculate smooth interpolation factor
+							local smoothFactor = 1 - (1 / smoothness)
+							
+							-- Get current and target look vectors
+							local currentLook = currentCFrame.LookVector
+							local targetLook = (targetPos - currentCFrame.Position).Unit
+							
+							-- Apply smoothing by lerping between current and target look vectors
+							local smoothLook = currentLook:Lerp(targetLook, 1 - smoothFactor)
+							
+							-- Create new CFrame with smoothed look vector
+							camera.CFrame = CFrame.new(camera.CFrame.Position, camera.CFrame.Position + smoothLook)
+						else
+							-- Direct camera lock without smoothing
+							camera.CFrame = CFrame.new(camera.CFrame.Position, targetPos)
+						end
+					end
+				end)
+			end
+		end
+		
+		-- Camlock Keybind
+		Tab:Keybind({
+			Label = "Camlock Keybind",
+			Value = Enum.KeyCode.Q,
+			OnKeybindSet = function(self, KeyId)
+				warn("[OnKeybindSet] .Value ->", KeyId)
+			end,
+			Callback = function(self, KeyId)
+				-- Only toggle camlock if aim assist is enabled
+				if not isAimAssistEnabled then
+					print("Aim Assist is disabled. Enable it first.")
+					return
+				end
+				
+				isCamlockEnabled = not isCamlockEnabled
+				
+				if isCamlockEnabled then
+					-- Find closest player to mouse cursor
+					local closestPlayer = nil
+					local closestDistance = math.huge
+					local localPlayer = game.Players.LocalPlayer
+					local mouse = localPlayer:GetMouse()
+					local camera = workspace.CurrentCamera
+					
+					for _, player in pairs(game.Players:GetPlayers()) do
+						if player ~= localPlayer then
+							local targetPart = getTargetPart(player)
+							
+							if targetPart then
+								-- Get 2D screen position of player
+								local screenPoint = camera:WorldToScreenPoint(targetPart.Position)
+								
+								-- Only consider players in front of the camera
+								if screenPoint.Z > 0 then
+									-- Calculate distance from mouse to player on screen
+									local mouseDistance = (Vector2.new(mouse.X, mouse.Y) - Vector2.new(screenPoint.X, screenPoint.Y)).Magnitude
+									
+									if mouseDistance < closestDistance then
+										closestDistance = mouseDistance
+										closestPlayer = player
+									end
+								end
+							end
+						end
+					end
+					
+					camlockTarget = closestPlayer
+					print("Camlock enabled on: " .. (camlockTarget and camlockTarget.Name or "No target found"))
+					
+					-- Start the camlock loop
+					if camlockTarget then
+						updateCamlockBehavior()
+					end
+				else
+					-- Disable camlock
+					game:GetService("RunService"):UnbindFromRenderStep("CamlockLoop")
+					camlockTarget = nil
+					print("Camlock disabled")
+				end
+			end,
+		})
+	end
+end
+
+-- Create Visuals tab
+local Tab = Window:CreateTab({Name="Visuals"}) --> Canvas
+Tab:Label({
+	Text = ``
+})
+
+-- ESP Section
+Tab:Label({
+	Text = "Esp"
+})
+
+local boxEspEnabled = false
+local nameEspEnabled = false
+local nameEspMode = "Username" -- "Username" or "DisplayName"
+local espColor = Color3.fromRGB(255, 255, 255)
+local nameEspColor = Color3.fromRGB(255, 255, 255) -- Separate color for name ESP
+local espRenderConnection = nil
+local espDrawings = {}
+
+-- Function to clean up ESP
+local function cleanupEsp()
+	if espRenderConnection then
+		espRenderConnection:Disconnect()
+		espRenderConnection = nil
+	end
+	
+	for _, drawing in pairs(espDrawings) do
+		if drawing.Remove then
+			drawing:Remove()
+		end
+	end
+	espDrawings = {}
+end
+
+-- Function to update ESP rendering
+local function updateEspRendering()
+	-- Clean up existing connection
+	if espRenderConnection then
+		espRenderConnection:Disconnect()
+	end
+	
+	espRenderConnection = game:GetService("RunService").RenderStepped:Connect(function()
+		-- Clear old ESP
+		for _, drawing in pairs(espDrawings) do
+			if drawing.Remove then
+				drawing:Remove()
+			end
+		end
+		espDrawings = {}
+		
+		-- Draw new ESP elements
+		local localPlayer = game.Players.LocalPlayer
+		local camera = workspace.CurrentCamera
+		
+		for _, player in pairs(game.Players:GetPlayers()) do
+			if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+				local character = player.Character
+				
+				-- Get character bounds
+				local minX, minY, minZ = math.huge, math.huge, math.huge
+				local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+				
+				for _, part in pairs(character:GetChildren()) do
+					if part:IsA("BasePart") then
+						local size = part.Size
+						local pos = part.Position
+						
+						minX = math.min(minX, pos.X - size.X/2)
+						minY = math.min(minY, pos.Y - size.Y/2)
+						minZ = math.min(minZ, pos.Z - size.Z/2)
+						
+						maxX = math.max(maxX, pos.X + size.X/2)
+						maxY = math.max(maxY, pos.Y + size.Y/2)
+						maxZ = math.max(maxZ, pos.Z + size.Z/2)
+					end
+				end
+				
+				-- Calculate corners of the bounding box
+				local corners = {
+					Vector3.new(minX, minY, minZ),
+					Vector3.new(minX, minY, maxZ),
+					Vector3.new(minX, maxY, minZ),
+					Vector3.new(minX, maxY, maxZ),
+					Vector3.new(maxX, minY, minZ),
+					Vector3.new(maxX, minY, maxZ),
+					Vector3.new(maxX, maxY, minZ),
+					Vector3.new(maxX, maxY, maxZ)
+				}
+				
+				-- Convert corners to screen points
+				local screenPoints = {}
+				local onScreen = false
+				
+				for _, corner in ipairs(corners) do
+					local screenPoint, visible = camera:WorldToViewportPoint(corner)
+					if visible then
+						onScreen = true
+						table.insert(screenPoints, Vector2.new(screenPoint.X, screenPoint.Y))
+					end
+				end
+				
+				if onScreen and #screenPoints > 0 then
+					-- Find the bounds of the 2D box
+					local minX, minY = math.huge, math.huge
+					local maxX, maxY = -math.huge, -math.huge
+					
+					for _, point in ipairs(screenPoints) do
+						minX = math.min(minX, point.X)
+						minY = math.min(minY, point.Y)
+						maxX = math.max(maxX, point.X)
+						maxY = math.max(maxY, point.Y)
+					end
+					
+					local boxWidth = maxX - minX
+					local boxHeight = maxY - minY
+					
+					-- Draw box ESP if enabled
+					if boxEspEnabled then
+						-- Create box outline (black)
+						local boxOutline = Drawing.new("Square")
+						boxOutline.Visible = true
+						boxOutline.Transparency = 1
+						boxOutline.Color = Color3.new(0, 0, 0)
+						boxOutline.Thickness = 3
+						boxOutline.Size = Vector2.new(boxWidth, boxHeight)
+						boxOutline.Position = Vector2.new(minX, minY)
+						boxOutline.Filled = false
+						table.insert(espDrawings, boxOutline)
+						
+						-- Create box
+						local box = Drawing.new("Square")
+						box.Visible = true
+						box.Transparency = 1
+						box.Color = espColor
+						box.Thickness = 1
+						box.Size = Vector2.new(boxWidth, boxHeight)
+						box.Position = Vector2.new(minX, minY)
+						box.Filled = false
+						table.insert(espDrawings, box)
+					end
+					
+					-- Draw name ESP if enabled
+					if nameEspEnabled then
+						-- Determine which name to display based on mode
+						local displayText
+						if nameEspMode == "Username" then
+							displayText = player.Name
+						else -- "DisplayName"
+							displayText = player.DisplayName
+						end
+						
+						-- Create name text outline
+						local textOutline = Drawing.new("Text")
+						textOutline.Visible = true
+						textOutline.Transparency = 1
+						textOutline.Color = Color3.new(0, 0, 0)
+						textOutline.Text = displayText
+						textOutline.Size = 18
+						textOutline.Center = true
+						textOutline.Outline = true
+						textOutline.OutlineColor = Color3.new(0, 0, 0)
+						textOutline.Position = Vector2.new(minX + boxWidth/2, minY - 20)
+						table.insert(espDrawings, textOutline)
+						
+						-- Create name text
+						local text = Drawing.new("Text")
+						text.Visible = true
+						text.Transparency = 1
+						text.Color = nameEspColor -- Use nameEspColor instead of espColor
+						text.Text = displayText
+						text.Size = 18
+						text.Center = true
+						text.Outline = false
+						text.Position = Vector2.new(minX + boxWidth/2, minY - 20)
+						table.insert(espDrawings, text)
+					end
+				end
+			end
+		end
+	end)
+end
+
+-- Box ESP Toggle
+Tab:Checkbox({
+	Value = false,
+	Label = "Box ESP",
+	Callback = function(self, Value)
+		boxEspEnabled = Value
+		
+		if boxEspEnabled or nameEspEnabled then
+			-- Start ESP rendering if any ESP feature is enabled
+			updateEspRendering()
+		else
+			-- Clean up ESP if all features are disabled
+			cleanupEsp()
+		end
+	end,
+})
+
+-- Name ESP Toggle
+Tab:Checkbox({
+	Value = false,
+	Label = "Name ESP",
+	Callback = function(self, Value)
+		nameEspEnabled = Value
+		
+		if boxEspEnabled or nameEspEnabled then
+			-- Start ESP rendering if any ESP feature is enabled
+			updateEspRendering()
+		else
+			-- Clean up ESP if all features are disabled
+			cleanupEsp()
+		end
+	end,
+})
+
+-- Name ESP Mode Combo
+Tab:Combo({
+	Value = "Username",
+	Label = "Name ESP Mode",
+	Items = {"Username", "DisplayName"},
+	Callback = function(self, Value)
+		nameEspMode = Value
+	end
+})
+
+-- Colors Section
+local ColorsTab = Window:CreateTab({Name="Colors"})
+
+ColorsTab:Label({
+	Text = "ESP Settings"
+})
+-- ESP Color Picker
+ColorsTab:DragColor3({
+	Value = Color3.fromRGB(255, 255, 255),
+	Label = "Box ESP Color",
+	Callback = function(self, Value)
+		espColor = Value
+	end
+})
+
+-- Name ESP Color Picker
+ColorsTab:DragColor3({
+	Value = Color3.fromRGB(255, 255, 255),
+	Label = "Name ESP Color",
+	Callback = function(self, Value)
+		nameEspColor = Value -- This now correctly updates the nameEspColor variable
+	end
+})
